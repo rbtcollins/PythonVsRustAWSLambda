@@ -12,19 +12,26 @@ use std::io::Read;
 
 #[tokio::main]
 async fn main() -> Result<(), lambda_runtime::Error> {
-    let func = service_fn(move |req: LambdaEvent<Value>| handler(req.payload, req.context));
+    let config: aws_config::SdkConfig = aws_config::load_from_env().await;
+    let s3_client: aws_sdk_s3::Client = aws_sdk_s3::Client::new(&config);
+
+    let func = service_fn(move |req: LambdaEvent<Value>| {
+        handler(s3_client.clone(), req.payload, req.context)
+    });
     lambda_runtime::run(func).await?;
     Ok(())
 }
 
-async fn handler(req: Value, _ctx: lambda_runtime::Context) -> Result<(), Box<Error>> {
+async fn handler(
+    s3_client: aws_sdk_s3::Client,
+    req: Value,
+    _ctx: lambda_runtime::Context,
+) -> Result<(), Box<Error>> {
     let events: S3Event = serde_json::from_value(req).unwrap();
     for e in events.records {
         let bucket_name: String = e.s3.bucket.name.expect("Unable to get s3 bucket name.");
         let key: String = e.s3.object.key.expect("unable to get s3 file key");
 
-        let config: aws_config::SdkConfig = aws_config::load_from_env().await;
-        let s3_client: aws_sdk_s3::Client = aws_sdk_s3::Client::new(&config);
         let data: aws_lambda_events::bytes::Bytes = s3_client
             .get_object()
             .bucket(&bucket_name)
