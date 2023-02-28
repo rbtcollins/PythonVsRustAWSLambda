@@ -58,29 +58,26 @@ async fn handler(
             .body
             .into_async_read();
 
-        let csv_data = task::block_in_place(move || {
-            let mut d = GzDecoder::new(ReadFromAsync(data));
-            let mut csv_data = String::new();
-            d.read_to_string(&mut csv_data)?;
-            Ok::<_, Error>(csv_data)
+        let tab_converted = task::block_in_place(move || {
+            let d = BufReader::new(GzDecoder::new(ReadFromAsync(data)));
+            let split = d.lines();
+            let mut tab_converted = String::new();
+            for line in split.skip(1) {
+                let line = line?;
+                let date = &line[0..14].trim();
+                let serial_number = &line[15..35].trim();
+                let model = &line[36..78].trim();
+                let capacity_bytes = &line[79..97].trim();
+                let failure = &line[98..108].trim();
+                let tab_line = format!(
+                    "{}\t{}\t{}\t{}\t{}\n",
+                    date, serial_number, model, capacity_bytes, failure
+                );
+                tab_converted.push_str(&tab_line);
+            }
+            Ok::<_, Error>(tab_converted)
         })?;
 
-        let split = csv_data.lines();
-        let result_vector = split.collect::<Vec<_>>();
-
-        let mut tab_converted = String::new();
-        for line in result_vector.iter().skip(1) {
-            let date = &line[0..14].trim();
-            let serial_number = &line[15..35].trim();
-            let model = &line[36..78].trim();
-            let capacity_bytes = &line[79..97].trim();
-            let failure = &line[98..108].trim();
-            let tab_line = format!(
-                "{}\t{}\t{}\t{}\t{}\n",
-                date, serial_number, model, capacity_bytes, failure
-            );
-            tab_converted.push_str(&tab_line);
-        }
         let f = File::create("/tmp/file.gz").context("failed to create file")?;
         let mut gz = GzBuilder::new()
             .filename("tab_converted.txt")
