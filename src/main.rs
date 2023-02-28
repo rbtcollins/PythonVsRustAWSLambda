@@ -1,22 +1,25 @@
-use aws_lambda_events::s3::S3Event;
-use flate2::read::GzDecoder;
-use flate2::Compression;
-use flate2::GzBuilder;
-use lambda_runtime::{service_fn, Error, LambdaEvent};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::io::Read;
 
+use anyhow::Context;
+use anyhow::{anyhow, Result};
+use aws_lambda_events::s3::S3Event;
+use flate2::read::GzDecoder;
+use flate2::Compression;
+use flate2::GzBuilder;
+use lambda_runtime::{service_fn, LambdaEvent};
+
 #[tokio::main]
-async fn main() -> Result<(), lambda_runtime::Error> {
+async fn main() -> Result<()> {
     let config = aws_config::load_from_env().await;
     let s3_client = aws_sdk_s3::Client::new(&config);
 
     let func = service_fn(move |req: LambdaEvent<S3Event>| {
         handler(s3_client.clone(), req.payload, req.context)
     });
-    lambda_runtime::run(func).await?;
+    lambda_runtime::run(func).await.map_err(|e| anyhow!(e))?;
     Ok(())
 }
 
@@ -24,27 +27,25 @@ async fn handler(
     s3_client: aws_sdk_s3::Client,
     events: S3Event,
     _ctx: lambda_runtime::Context,
-) -> Result<(), Box<Error>> {
+) -> Result<()> {
     for e in events.records {
-        let bucket_name = e.s3.bucket.name.expect("Unable to get s3 bucket name.");
-        let key = e.s3.object.key.expect("unable to get s3 file key");
+        let bucket_name = e.s3.bucket.name.context("Unable to get s3 bucket name.")?;
+        let key = e.s3.object.key.context("unable to get s3 file key")?;
 
         let data = s3_client
             .get_object()
             .bucket(&bucket_name)
             .key(&key)
             .send()
-            .await
-            .unwrap()
+            .await?
             .body
             .collect()
-            .await
-            .unwrap()
+            .await?
             .into_bytes();
 
         let mut d = GzDecoder::new(&data[..]);
         let mut csv_data = String::new();
-        d.read_to_string(&mut csv_data).unwrap();
+        d.read_to_string(&mut csv_data)?;
 
         let split = csv_data.lines();
         let result_vector = split.collect::<Vec<_>>();
@@ -62,19 +63,19 @@ async fn handler(
             );
             tab_converted.push_str(&tab_line);
         }
-        let f = File::create("/tmp/file.gz").expect("failed to create file");
+        let f = File::create("/tmp/file.gz").context("failed to create file")?;
         let mut gz = GzBuilder::new()
             .filename("tab_converted.txt")
             .write(f, Compression::default());
         gz.write_all(tab_converted.as_bytes())
-            .expect("failed to write bytes to file");
-        gz.finish().expect("failed to flush bytes to file");
+            .context("failed to write bytes to file")?;
+        gz.finish().context("failed to flush bytes to file")?;
 
-        let file = File::open("/tmp/file.gz").expect("problem reading file");
+        let file = File::open("/tmp/file.gz").context("problem reading file")?;
         let mut reader = BufReader::new(file);
         let mut buffer = Vec::new();
 
-        reader.read_to_end(&mut buffer).expect("error");
+        reader.read_to_end(&mut buffer).context("error")?;
 
         let remote_uri = &key.replace("fixed_width_raw/", "tab_converted/");
         s3_client
@@ -84,7 +85,7 @@ async fn handler(
             .body(buffer.into())
             .send()
             .await
-            .unwrap();
+            .context("failed to to upload result")?;
     }
     Ok(())
 }
