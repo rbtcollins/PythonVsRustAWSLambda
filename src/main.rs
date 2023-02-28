@@ -3,7 +3,6 @@ use flate2::read::GzDecoder;
 use flate2::Compression;
 use flate2::GzBuilder;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
-use serde_json::Value;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
@@ -14,7 +13,7 @@ async fn main() -> Result<(), lambda_runtime::Error> {
     let config = aws_config::load_from_env().await;
     let s3_client = aws_sdk_s3::Client::new(&config);
 
-    let func = service_fn(move |req: LambdaEvent<Value>| {
+    let func = service_fn(move |req: LambdaEvent<S3Event>| {
         handler(s3_client.clone(), req.payload, req.context)
     });
     lambda_runtime::run(func).await?;
@@ -23,10 +22,9 @@ async fn main() -> Result<(), lambda_runtime::Error> {
 
 async fn handler(
     s3_client: aws_sdk_s3::Client,
-    req: Value,
+    events: S3Event,
     _ctx: lambda_runtime::Context,
 ) -> Result<(), Box<Error>> {
-    let events: S3Event = serde_json::from_value(req).unwrap();
     for e in events.records {
         let bucket_name = e.s3.bucket.name.expect("Unable to get s3 bucket name.");
         let key = e.s3.object.key.expect("unable to get s3 file key");
