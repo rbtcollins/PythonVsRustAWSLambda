@@ -1,10 +1,8 @@
-use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::io::Read;
 
 use anyhow::Context;
-use anyhow::Error;
 use anyhow::{anyhow, Result};
 use aws_lambda_events::s3::S3Event;
 use flate2::read::GzDecoder;
@@ -61,7 +59,11 @@ async fn handler(
         let tab_converted = task::block_in_place(move || {
             let d = BufReader::new(GzDecoder::new(ReadFromAsync(data)));
             let split = d.lines();
-            let mut tab_converted = String::new();
+            let gz_output = vec![];
+            let mut gz = GzBuilder::new()
+                .filename("tab_converted.txt")
+                .write(gz_output, Compression::new(6));
+
             for line in split.skip(1) {
                 let line = line?;
                 let date = &line[0..14].trim();
@@ -69,35 +71,21 @@ async fn handler(
                 let model = &line[36..78].trim();
                 let capacity_bytes = &line[79..97].trim();
                 let failure = &line[98..108].trim();
-                let tab_line = format!(
-                    "{}\t{}\t{}\t{}\t{}\n",
+                writeln!(
+                    gz,
+                    "{}\t{}\t{}\t{}\t{}",
                     date, serial_number, model, capacity_bytes, failure
-                );
-                tab_converted.push_str(&tab_line);
+                )?;
             }
-            Ok::<_, Error>(tab_converted)
+            gz.finish()
         })?;
-
-        let f = File::create("/tmp/file.gz").context("failed to create file")?;
-        let mut gz = GzBuilder::new()
-            .filename("tab_converted.txt")
-            .write(f, Compression::default());
-        gz.write_all(tab_converted.as_bytes())
-            .context("failed to write bytes to file")?;
-        gz.finish().context("failed to flush bytes to file")?;
-
-        let file = File::open("/tmp/file.gz").context("problem reading file")?;
-        let mut reader = BufReader::new(file);
-        let mut buffer = Vec::new();
-
-        reader.read_to_end(&mut buffer).context("error")?;
 
         let remote_uri = &key.replace("fixed_width_raw/", "tab_converted/");
         s3_client
             .put_object()
             .bucket(&bucket_name)
             .key(remote_uri)
-            .body(buffer.into())
+            .body(tab_converted.into())
             .send()
             .await
             .context("failed to to upload result")?;
