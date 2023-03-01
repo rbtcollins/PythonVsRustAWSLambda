@@ -57,14 +57,15 @@ async fn handler(
             .into_async_read();
 
         let tab_converted = task::block_in_place(move || {
-            let d = BufReader::new(GzDecoder::new(ReadFromAsync(data)));
-            let split = d.lines();
             let gz_output = vec![];
             let mut gz = GzBuilder::new()
                 .filename("tab_converted.txt")
                 .write(gz_output, Compression::new(9));
+            let split = BufReader::new(GzDecoder::new(ReadFromAsync(data)))
+                .lines()
+                .skip(1);
 
-            for line in split.skip(1) {
+            for line in split {
                 let line = line?;
                 let date = &line[0..14].trim();
                 let serial_number = &line[15..35].trim();
