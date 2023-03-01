@@ -62,7 +62,7 @@ async fn handler(
             let gz_output = vec![];
             let mut gz = GzBuilder::new()
                 .filename("tab_converted.txt")
-                .write(gz_output, Compression::new(6));
+                .write(gz_output, Compression::new(9));
 
             for line in split.skip(1) {
                 let line = line?;
